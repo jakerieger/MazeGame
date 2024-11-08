@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"net"
+	"sync"
 )
 
 const (
@@ -20,21 +21,56 @@ type Client struct {
 }
 
 type ClientConnectRequest struct {
-	Name  string `json:"name"`
-	Color uint32 `json:"color"`
+	Name     string `json:"name"`
+	Color    uint32 `json:"color"`
+	RoomName string `json:"roomName"`
 }
 
-func RegisterClient(name string, color uint32, positionX, positionY float32) *Client {
-	return &Client{name, color, positionX, positionY}
+type ClientPosition struct {
+	PosX float32 `json:"posX"`
+	PosY float32 `json:"posY"`
 }
 
-// { IP : Client{} }
-var connectedClients map[string]*Client
+func RegisterClient(roomName string, name string, color uint32, positionX, positionY float32) {
+	clientMapMutex.Lock()
+	defer clientMapMutex.Unlock()
+
+	client := &Client{name, color, positionX, positionY}
+	connectedClients[roomName] = append(connectedClients[roomName], client)
+}
+
+func GetRoomClients(roomName string) []*Client {
+	clientMapMutex.Lock()
+	defer clientMapMutex.Unlock()
+
+	return connectedClients[roomName]
+}
+
+func DisconnectClientFromRoom(roomName string, clientName string) {
+	clientMapMutex.Lock()
+	defer clientMapMutex.Unlock()
+
+	var newClients []*Client
+	for _, client := range connectedClients[roomName] {
+		if client.Name != clientName {
+			newClients = append(newClients, client)
+		}
+	}
+
+	// Delete room if no players are present
+	if len(newClients) == 0 {
+		delete(connectedClients, roomName)
+	} else {
+		connectedClients[roomName] = newClients
+	}
+}
+
+var (
+	connectedClients = make(map[string][]*Client)
+	clientMapMutex   = sync.RWMutex{}
+)
 
 func main() {
-	// Init our client map
-	connectedClients = make(map[string]*Client)
-
 	listener, err := net.Listen("tcp", ":40200")
 	if err != nil {
 		fmt.Println(err)
@@ -89,8 +125,6 @@ func handleClient(conn net.Conn) {
 		fmt.Println(jsonBody)
 
 		if opcode == CmdConnect {
-			client := RegisterClient("Jake", 0xFFFF0000, 0, 0)
-			connectedClients[conn.RemoteAddr().String()] = client
 		}
 
 		if opcode == CmdDisconnect {
