@@ -1,0 +1,13 @@
+.idea/
+obj/
+bin/
+build/
+bin/
+out/
+.vs/
+.vscode/
+**/*.exe
+**/*.obj
+**/*.bin
+**/*.dll
+**/*.lib
