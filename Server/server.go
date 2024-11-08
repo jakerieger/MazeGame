@@ -12,32 +12,32 @@ const (
 	CmdDisconnect
 	CmdMove
 	CmdRequestPosition
+	CmdUpdatePosition
 )
 
 type Client struct {
 	Name  string  `json:"name"`
 	Color uint32  `json:"color"`
+	Room  string  `json:"room"`
 	PosX  float32 `json:"posX"`
 	PosY  float32 `json:"posY"`
+	conn  net.Conn
 }
 
 type ClientConnectRequest struct {
-	Name     string `json:"name"`
-	Color    uint32 `json:"color"`
-	RoomName string `json:"roomName"`
+	Name  string `json:"name"`
+	Color uint32 `json:"color"`
+	Room  string `json:"roomName"`
 }
 
 type ClientPosition struct {
+	Name string  `json:"name"`
 	PosX float32 `json:"posX"`
 	PosY float32 `json:"posY"`
 }
 
-func RegisterClient(roomName string, name string, color uint32, positionX, positionY float32) {
-	clientMapMutex.Lock()
-	defer clientMapMutex.Unlock()
-
-	client := &Client{name, color, positionX, positionY}
-	connectedClients[roomName] = append(connectedClients[roomName], client)
+func RegisterClient(client *Client) {
+	connectedClients[client.Room] = append(connectedClients[client.Room], client)
 }
 
 func GetRoomClients(roomName string) []*Client {
@@ -63,6 +63,36 @@ func DisconnectClientFromRoom(roomName string, clientName string) {
 		delete(connectedClients, roomName)
 	} else {
 		connectedClients[roomName] = newClients
+	}
+}
+
+func SendRoomPositions(roomName string) {
+	clients := GetRoomClients(roomName)
+
+	// Gather all positions
+	var positions []ClientPosition
+	for _, client := range clients {
+		positions = append(positions, ClientPosition{
+			Name: client.Name,
+			PosX: client.PosX,
+			PosY: client.PosY,
+		})
+	}
+
+	// Convert positions to JSON
+	positionsData, err := json.Marshal(positions)
+	if err != nil {
+		fmt.Println("Error marshalling positions:", err)
+		return
+	}
+
+	// Send positions to each client
+	for _, client := range clients {
+		_, err := client.conn.Write(append([]byte{CmdUpdatePosition}, positionsData...))
+		fmt.Printf("Updated client position: (%f, %f)", client.PosX, client.PosY)
+		if err != nil {
+			fmt.Println("Error sending positions to client:", client.Name, err)
+		}
 	}
 }
 
@@ -109,40 +139,68 @@ func handleClient(conn net.Conn) {
 
 	// TODO: Later on, this can be optimized once we know the maximum size of a message block
 	buffer := make([]byte, 1024)
+	var client *Client
 
 	for {
-		// The first 4 bytes of the message should contain the command opcode,
-		// followed by the json body of the request
 		n, err := conn.Read(buffer)
 		if err != nil {
 			fmt.Println(err)
+			if client != nil {
+				DisconnectClientFromRoom(client.Room, client.Name)
+				SendRoomPositions(client.Room)
+			}
 			return
 		}
 
 		opcode := int(buffer[0])
-		fmt.Println(opcode)
-
 		jsonBody := string(buffer[4:n])
-		fmt.Println(jsonBody)
 
-		if opcode == CmdConnect {
+		switch opcode {
+		case CmdConnect:
 			data := ClientConnectRequest{}
 			err := json.Unmarshal([]byte(jsonBody), &data)
 			if err != nil {
-				fmt.Println(err)
+				fmt.Println("Error unmarshaling connection request:", err)
 				return
 			}
-			RegisterClient(data.RoomName, data.Name, data.Color, 0, 0)
-		}
 
-		if opcode == CmdDisconnect {
-			fmt.Println("Client disconnected.")
-		}
+			client = &Client{
+				Name:  data.Name,
+				Color: data.Color,
+				Room:  data.Room,
+				PosX:  0,
+				PosY:  0,
+				conn:  conn,
+			}
+			RegisterClient(client)
+			SendRoomPositions(data.Room)
 
-		if opcode == CmdMove {
-		}
+		case CmdDisconnect:
+			if client != nil {
+				DisconnectClientFromRoom(client.Room, client.Name)
+				SendRoomPositions(client.Room)
+			}
+			return
 
-		if opcode == CmdRequestPosition {
+		case CmdMove:
+			if client != nil {
+				position := ClientPosition{}
+				err := json.Unmarshal([]byte(jsonBody), &position)
+				if err != nil {
+					fmt.Println("Error unmarshaling position:", err)
+					continue
+				}
+
+				// Update client position and broadcast it
+				client.PosX = position.PosX
+				client.PosY = position.PosY
+				SendRoomPositions(client.Room)
+			}
+
+		case CmdRequestPosition:
+			if client != nil {
+				SendRoomPositions(client.Room)
+			}
 		}
 	}
 }
