@@ -11,3 +11,4 @@ out/
 **/*.bin
 **/*.dll
 **/*.lib
+.config/

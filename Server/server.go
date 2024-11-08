@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"net"
 	"sync"
@@ -125,9 +126,17 @@ func handleClient(conn net.Conn) {
 		fmt.Println(jsonBody)
 
 		if opcode == CmdConnect {
+			data := ClientConnectRequest{}
+			err := json.Unmarshal([]byte(jsonBody), &data)
+			if err != nil {
+				fmt.Println(err)
+				return
+			}
+			RegisterClient(data.RoomName, data.Name, data.Color, 0, 0)
 		}
 
 		if opcode == CmdDisconnect {
+			fmt.Println("Client disconnected.")
 		}
 
 		if opcode == CmdMove {
